@@ -1,6 +1,9 @@
 name: Build debug APK
 
 on:
+  push:
+    branches:
+      - '**'
   workflow_dispatch:
 
 jobs:
@@ -21,6 +24,9 @@ jobs:
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
+
+      - name: Inject Klipy API key
+        run: echo "KLIPY_API_KEY=${{ secrets.KLIPY_API_KEY }}" >> local.properties
 
       - name: Build with Gradle
         run: ./gradlew assembleDebug
