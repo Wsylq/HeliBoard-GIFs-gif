@@ -5,8 +5,7 @@ import android.util.AttributeSet;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.MotionEvent;
-import android.view.GestureDetector;
-import android.view.GestureDetector.SimpleOnGestureListener;
+
 import android.util.Log;
 import android.util.DisplayMetrics;
 import android.view.inputmethod.EditorInfo;
@@ -229,15 +228,11 @@ public class GifSearchView extends LinearLayout {
         adapter = new GifAdapter();
         adapter.setHasStableIds(true);
         grid.setAdapter(adapter);
-        // Add gesture-based single-tap listener for grid items
-        final GestureDetector gestureDetector = new GestureDetector(context,
-                new GestureDetector.SimpleOnGestureListener() {
-                    @Override public boolean onSingleTapUp(MotionEvent e) { return true; }
-                });
+        // Add single-tap listener for grid items (no GestureDetector gate — ACTION_UP is sufficient)
         grid.addOnItemTouchListener(new RecyclerView.OnItemTouchListener() {
             @Override
             public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent e) {
-                if (!gestureDetector.onTouchEvent(e)) return false;
+                if (e.getActionMasked() != MotionEvent.ACTION_UP) return false;
                 View child = rv.findChildViewUnder(e.getX(), e.getY());
                 if (child != null) {
                     int pos = rv.getChildAdapterPosition(child);
@@ -1173,16 +1168,16 @@ public class GifSearchView extends LinearLayout {
                 Log.d(TAG, "GifSearchView onTouchEvent action=" + ev.getActionMasked());
                 break;
         }
-        return false;
+        return true;
     }
 
     /** Dispatch to children, then pass to onTouchEvent if unhandled */
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
         boolean handled = super.dispatchTouchEvent(ev);
-        /*if (!handled) {
+        if (!handled) {
             handled = onTouchEvent(ev);
-        }*/
+        }
         Log.d(TAG, "GifSearchView dispatchTouchEvent handled=" + handled + " action=" + ev.getActionMasked());
         return handled;
     }

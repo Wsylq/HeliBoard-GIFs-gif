@@ -1304,20 +1304,31 @@ public class LatinIME extends InputMethodService implements
     public void onComputeInsets(final InputMethodService.Insets outInsets) {
         super.onComputeInsets(outInsets);
         View root = getWindow().getWindow().getDecorView();
-        // Identify suggestion strip (toolbar), GIF panel, and keyboard view heights
+        // Use the top of the strip_container (the topmost visible IME view) to determine
+        // where the touchable region starts. This correctly handles all modes (normal typing,
+        // emoji palette, clipboard, GIF panel) because the strip is always the topmost child
+        // and its getTop() gives the correct offset within the root decor view.
         View strip = (mInputView != null) ? mInputView.findViewById(R.id.strip_container) : null;
-        View panel = (mInputView != null) ? mInputView.findViewById(R.id.gif_search_view) : null;
-        View keys = (mInputView != null) ? mInputView.findViewById(R.id.keyboard_view_wrapper) : null;
         int viewW = root != null ? root.getWidth() : 0;
         int viewH = root != null ? root.getHeight() : 0;
-        int sH = (strip != null && strip.getVisibility() == View.VISIBLE) ? strip.getHeight() : 0;
-        int pH = (panel != null && panel.getVisibility() == View.VISIBLE) ? panel.getHeight() : 0;
-        int kH = (keys != null && keys.getVisibility() == View.VISIBLE) ? keys.getHeight() : 0;
-        int totalH = sH + pH + kH;
+        // Compute the top of the IME content by walking up from strip to the root decor view.
+        int topInset = viewH; // fallback: no touchable region
+        if (strip != null && strip.getVisibility() == View.VISIBLE) {
+            // getLocationInWindow gives position relative to the window (decor view)
+            int[] loc = new int[2];
+            strip.getLocationInWindow(loc);
+            topInset = loc[1];
+        } else if (mInputView != null) {
+            // strip hidden (e.g. fullscreen): use the input view's own position
+            int[] loc = new int[2];
+            mInputView.getLocationInWindow(loc);
+            topInset = loc[1];
+        }
+        topInset = Math.max(0, topInset);
         outInsets.touchableInsets = InputMethodService.Insets.TOUCHABLE_INSETS_REGION;
-        outInsets.touchableRegion.set(0, Math.max(0, viewH - totalH), viewW, viewH);
-        outInsets.contentTopInsets = Math.max(0, viewH - totalH);
-        outInsets.visibleTopInsets = Math.max(0, viewH - totalH);
+        outInsets.touchableRegion.set(0, topInset, viewW, viewH);
+        outInsets.contentTopInsets = topInset;
+        outInsets.visibleTopInsets = topInset;
     }
 
     /**
