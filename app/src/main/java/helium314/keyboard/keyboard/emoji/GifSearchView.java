@@ -135,116 +135,91 @@ public class GifSearchView extends LinearLayout {
     }
     private int spanCount = 2; // will be recalculated at runtime
 
-    // ── Recent searches ──────────────────────────────────────────────────────
-    private static final String PREFS_RECENTS = "gif_recent_searches";
-    private static final String KEY_RECENTS   = "recents";
-    private static final int    MAX_RECENTS   = 10;
+    // ── Usage-based suggestions ───────────────────────────────────────────────
+    private static final String PREFS_USAGE  = "gif_usage_counts";
+    private static final int    MAX_CHIPS    = 8;
 
-    private java.util.List<String> loadRecents() {
-        android.content.SharedPreferences sp =
-                getContext().getSharedPreferences(PREFS_RECENTS, Context.MODE_PRIVATE);
-        String raw = sp.getString(KEY_RECENTS, "");
-        java.util.List<String> list = new java.util.ArrayList<>();
-        if (raw != null && !raw.isEmpty()) {
-            for (String s : raw.split("\n")) {
-                if (!s.isEmpty()) list.add(s);
-            }
-        }
-        return list;
-    }
-
-    private void saveRecents(java.util.List<String> list) {
-        StringBuilder sb = new StringBuilder();
-        for (String s : list) sb.append(s).append('\n');
-        getContext().getSharedPreferences(PREFS_RECENTS, Context.MODE_PRIVATE)
-                .edit().putString(KEY_RECENTS, sb.toString()).apply();
-    }
-
-    private void addRecent(String query) {
+    /** Increment the usage count for a search term. */
+    private void recordUsage(String query) {
         if (query == null || query.trim().isEmpty()) return;
-        java.util.List<String> list = loadRecents();
-        list.remove(query);          // remove duplicate
-        list.add(0, query);          // most-recent first
-        if (list.size() > MAX_RECENTS) list = list.subList(0, MAX_RECENTS);
-        saveRecents(list);
+        android.content.SharedPreferences sp =
+                getContext().getSharedPreferences(PREFS_USAGE, Context.MODE_PRIVATE);
+        int count = sp.getInt(query.trim().toLowerCase(), 0);
+        sp.edit().putInt(query.trim().toLowerCase(), count + 1).apply();
     }
 
-    private void removeRecent(String query) {
-        java.util.List<String> list = loadRecents();
-        list.remove(query);
-        saveRecents(list);
+    /** Return up to MAX_CHIPS most-used search terms, sorted by frequency. */
+    private java.util.List<String> getTopSuggestions() {
+        android.content.SharedPreferences sp =
+                getContext().getSharedPreferences(PREFS_USAGE, Context.MODE_PRIVATE);
+        java.util.Map<String, ?> all = sp.getAll();
+        java.util.List<java.util.Map.Entry<String, ?>> entries = new java.util.ArrayList<>(all.entrySet());
+        entries.sort((a, b) -> {
+            int ca = (a.getValue() instanceof Integer) ? (Integer) a.getValue() : 0;
+            int cb = (b.getValue() instanceof Integer) ? (Integer) b.getValue() : 0;
+            return Integer.compare(cb, ca); // descending
+        });
+        java.util.List<String> result = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<String, ?> e : entries) {
+            if (result.size() >= MAX_CHIPS) break;
+            result.add(e.getKey());
+        }
+        return result;
     }
 
-    // ── Debounce handler for search-as-you-type ───────────────────────────────
-    private final android.os.Handler searchHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-    private static final long SEARCH_DEBOUNCE_MS = 600;
+    // ── Suggestion chips container ────────────────────────────────────────────
+    private android.view.ViewGroup suggestionsChips;
+    private android.view.View suggestionsScroll;
 
-    // ── Recent-search adapter ─────────────────────────────────────────────────
-    private RecyclerView recentsListView;
-    private View recentsHeader;
-    private android.widget.TextView clearRecentsBtn;
-
-    private void refreshRecentsUi() {
-        java.util.List<String> recents = loadRecents();
+    private void refreshSuggestionsUi() {
+        if (suggestionsChips == null || suggestionsScroll == null) return;
         boolean hasQuery = queryField != null
                 && queryField.getText() != null
                 && queryField.getText().length() > 0;
-        boolean showRecents = !hasQuery && !recents.isEmpty();
-        if (recentsHeader != null)
-            recentsHeader.setVisibility(showRecents ? View.VISIBLE : View.GONE);
-        if (recentsListView != null)
-            recentsListView.setVisibility(showRecents ? View.VISIBLE : View.GONE);
-        if (recentsListView != null && recentsListView.getAdapter() instanceof RecentsAdapter) {
-            ((RecentsAdapter) recentsListView.getAdapter()).setItems(recents);
+        java.util.List<String> suggestions = getTopSuggestions();
+        if (hasQuery || suggestions.isEmpty()) {
+            suggestionsScroll.setVisibility(View.GONE);
+            return;
         }
-    }
-
-    private class RecentsAdapter extends RecyclerView.Adapter<RecentsAdapter.VH> {
-        private java.util.List<String> items = new java.util.ArrayList<>();
-
-        void setItems(java.util.List<String> list) {
-            items = new java.util.ArrayList<>(list);
-            notifyDataSetChanged();
-        }
-
-        @Override
-        public VH onCreateViewHolder(ViewGroup parent, int viewType) {
-            View v = android.view.LayoutInflater.from(parent.getContext())
-                    .inflate(R.layout.item_gif_recent_search, parent, false);
-            return new VH(v);
-        }
-
-        @Override
-        public void onBindViewHolder(VH holder, int position) {
-            String term = items.get(position);
-            holder.text.setText(term);
-            holder.itemView.setOnClickListener(v -> {
+        suggestionsScroll.setVisibility(View.VISIBLE);
+        suggestionsChips.removeAllViews();
+        float density = getResources().getDisplayMetrics().density;
+        int hPad = (int) (12 * density);
+        int vPad = (int) (4 * density);
+        int marginEnd = (int) (6 * density);
+        for (String term : suggestions) {
+            android.widget.TextView chip = new android.widget.TextView(getContext());
+            chip.setText(term);
+            chip.setTextColor(0xFFFFFFFF);
+            chip.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
+            chip.setPadding(hPad, vPad, hPad, vPad);
+            chip.setBackground(makeChipBackground());
+            android.widget.LinearLayout.LayoutParams lp =
+                    new android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+            lp.setMarginEnd(marginEnd);
+            chip.setLayoutParams(lp);
+            chip.setOnClickListener(v -> {
                 queryField.setText(term);
                 queryField.setSelection(term.length());
                 performSearch(term);
             });
-            holder.removeBtn.setOnClickListener(v -> {
-                removeRecent(term);
-                refreshRecentsUi();
-            });
+            suggestionsChips.addView(chip);
         }
+    }
 
-        @Override public int getItemCount() { return items.size(); }
-
-        class VH extends RecyclerView.ViewHolder {
-            android.widget.TextView text;
-            android.widget.ImageButton removeBtn;
-            VH(View v) {
-                super(v);
-                text      = v.findViewById(R.id.recent_search_text);
-                removeBtn = v.findViewById(R.id.btn_remove_recent);
-            }
-        }
+    private android.graphics.drawable.Drawable makeChipBackground() {
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        bg.setCornerRadius(100f);
+        bg.setColor(0x445B9BD5); // semi-transparent accent
+        bg.setStroke(1, 0x885B9BD5);
+        return bg;
     }
 
     public GifSearchView(Context context, AttributeSet attrs) {
         super(context, attrs);
-        // Inflate layout and ensure focus/touch configuration
         View.inflate(context, R.layout.gif_search_view, this);
         setClickable(false);
         setFocusable(true);
@@ -275,50 +250,29 @@ public class GifSearchView extends LinearLayout {
                 if (queryField.getText() != null && queryField.getText().length() > 0) {
                     resetGifUi();
                 } else {
-                    // No query — close the GIF panel entirely
                     if (actionsListener != null) actionsListener.onGifInsertCompleted();
                 }
             });
         }
 
-        // ── Recent searches UI ─────────────────────────────────────────────
-        recentsHeader   = findViewById(R.id.gif_recents_header);
-        recentsListView = findViewById(R.id.gif_recents_list);
-        clearRecentsBtn = findViewById(R.id.btn_gif_clear_recents);
-        if (clearRecentsBtn != null) {
-            clearRecentsBtn.setOnClickListener(v -> {
-                saveRecents(new java.util.ArrayList<>());
-                refreshRecentsUi();
-            });
-        }
-        if (recentsListView != null) {
-            recentsListView.setLayoutManager(
-                    new androidx.recyclerview.widget.LinearLayoutManager(context));
-            recentsListView.setAdapter(new RecentsAdapter());
-        }
+        // ── Suggestion chips ───────────────────────────────────────────────
+        suggestionsScroll = findViewById(R.id.gif_suggestions_scroll);
+        suggestionsChips  = findViewById(R.id.gif_suggestions_chips);
 
-        // ── Query field text watcher — debounced search-as-you-type ───────
+        // ── Query field text watcher ───────────────────────────────────────
         queryField.addTextChangedListener(new android.text.TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override public void afterTextChanged(android.text.Editable s) {
-                boolean wantsKeys = (s == null || s.length() == 0) || !hasResults();
-                if (actionsListener != null) actionsListener.onGifEditingStateChanged(wantsKeys);
-                // Show/hide recents when field is cleared
-                refreshRecentsUi();
-                // Debounced auto-search
-                searchHandler.removeCallbacksAndMessages(null);
-                if (s != null && s.length() > 0) {
-                    final String query = s.toString();
-                    searchHandler.postDelayed(() -> performSearch(query), SEARCH_DEBOUNCE_MS);
-                }
+                // Show keyboard while user is typing
+                if (actionsListener != null) actionsListener.onGifEditingStateChanged(true);
+                refreshSuggestionsUi();
             }
         });
 
-        // IME action (Enter / Search key) triggers immediate search
+        // Enter / Search key triggers search
         queryField.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                searchHandler.removeCallbacksAndMessages(null);
                 performSearch(queryField.getText().toString());
                 return true;
             }
@@ -396,8 +350,8 @@ public class GifSearchView extends LinearLayout {
             @Override public void onRequestDisallowInterceptTouchEvent(boolean disallow) { }
         });
 
-        // Show recents on first open
-        refreshRecentsUi();
+        // Show suggestion chips on first open
+        refreshSuggestionsUi();
     }
 
 /*    @Override
@@ -474,8 +428,8 @@ public class GifSearchView extends LinearLayout {
             return;
         }
         Log.d(TAG, "Klipy enabled; using API key length=" + key.length());
-        // Save to recent searches
-        addRecent(query);
+        // Record usage for suggestions
+        recordUsage(query);
         // Reset pagination state for new search
         currentQuery = query;
         isLoading = false;
@@ -483,7 +437,6 @@ public class GifSearchView extends LinearLayout {
         nextPos = null;
         adapter.setItems(Collections.emptyList());
         adapter.notifyDataSetChanged();
-        if (actionsListener != null) actionsListener.onGifEditingStateChanged(true);
         new FetchGifTask().execute(query);
     }
     /**
@@ -515,17 +468,14 @@ public class GifSearchView extends LinearLayout {
      */
     public void setActionsListener(GifActionsListener l) {
         this.actionsListener = l;
-        // Initial editing state: no results, so keys visible
-        if (actionsListener != null) {
-            actionsListener.onGifEditingStateChanged(true);
-        }
+        // Show suggestion chips on first open
+        refreshSuggestionsUi();
     }
     /**
      * Reset the GIF UI: clear query and results.
      */
     private void resetGifUi() {
         try {
-            searchHandler.removeCallbacksAndMessages(null);
             EditText q = findViewById(R.id.gif_query_field);
             if (q != null) q.setText("");
             if (adapter != null) {
@@ -533,10 +483,8 @@ public class GifSearchView extends LinearLayout {
                 adapter.notifyDataSetChanged();
             }
             if (grid != null) grid.scrollToPosition(0);
-            // After reset, editing state: show keys
             if (actionsListener != null) actionsListener.onGifEditingStateChanged(true);
-            // Show recents again
-            refreshRecentsUi();
+            refreshSuggestionsUi();
         } catch (Throwable t) {
             Log.w(TAG, "resetGifUi: " + t);
         }
@@ -672,13 +620,12 @@ public class GifSearchView extends LinearLayout {
                 adapter.appendItems(items);
                 adapter.notifyItemRangeInserted(start, items.size());
             } else {
-                // First page
+                // First page — notify results visible (this triggers setUiMode(GIF) in LatinIME
+                // which hides the keyboard; no need to call onGifEditingStateChanged separately)
                 adapter.setItems(items);
                 adapter.notifyDataSetChanged();
                 if (actionsListener != null) actionsListener.onGifResultsVisible();
             }
-            // After load, editing state depends on having results => browsing mode hides keys
-            if (actionsListener != null) actionsListener.onGifEditingStateChanged(false);
         }
     }
 

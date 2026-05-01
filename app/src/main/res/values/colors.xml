@@ -80,8 +80,8 @@
     <color name="toolbar_scrollbar">#66808080</color>
 
     <!-- text used inside the GIF search EditText -->
-    <color name="gif_search_text">#FF000000</color>        <!-- black -->
-    <color name="gif_search_hint">#80000000</color>        <!-- 50% black -->
+    <color name="gif_search_text">#FFFFFFFF</color>        <!-- white on dark header -->
+    <color name="gif_search_hint">#99FFFFFF</color>        <!-- 60% white — visible on dark header -->
     <!-- GIF panel UI colors (light theme) -->
     <color name="gif_panel_background">#F0F2F5</color>
     <color name="gif_header_background">#2D3A4A</color>

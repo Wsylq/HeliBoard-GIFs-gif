@@ -884,11 +884,15 @@ public class LatinIME extends InputMethodService implements
                     setUiMode(UiMode.KEYS);
                 }
                 @Override public void onGifResultsVisible() {
-                    // Enter GIF mode when results appear
-                    setUiMode(UiMode.GIF);
+                    // Results loaded — hide keyboard so user can scroll GIFs freely.
+                    // setUiMode is NOT called here to avoid resetting gifWantsKeysVisible;
+                    // we just hide the keyboard directly.
+                    gifWantsKeysVisible = false;
+                    uiMode = UiMode.GIF;
+                    applyUiMode();
                 }
                 @Override public void onGifEditingStateChanged(boolean wantsKeysVisible) {
-                    // Show or hide keys while in GIF mode
+                    // Show keyboard when user starts typing (called from TextWatcher)
                     gifWantsKeysVisible = wantsKeysVisible;
                     if (uiMode == UiMode.GIF) applyUiMode();
                 }
@@ -1402,21 +1406,15 @@ public class LatinIME extends InputMethodService implements
                 break;
             case GIF:
                 if (gifSearchView != null) {
-                    // Adjust panel height: wrap for editing, expand for browsing
-                    View root = getWindow().getWindow().getDecorView();
-                    int totalH = root != null ? root.getHeight() : mInputView.getHeight();
-                    int stripH = (suggestionStrip != null && suggestionStrip.getVisibility() == View.VISIBLE)
-                            ? suggestionStrip.getHeight() : 0;
-                    ViewGroup.LayoutParams lp = gifSearchView.getLayoutParams();
-                    if (!gifWantsKeysVisible) {
-                        lp.height = totalH - stripH;
-                    } else {
-                        lp.height = LayoutParams.WRAP_CONTENT;
-                    }
-                    gifSearchView.setLayoutParams(lp);
                     gifSearchView.setVisibility(View.VISIBLE);
+                    // Always give the GIF panel full height (below the emoji tab strip)
+                    // The keyboard is shown/hidden separately via gifWantsKeysVisible
+                    ViewGroup.LayoutParams lp = gifSearchView.getLayoutParams();
+                    lp.height = LayoutParams.WRAP_CONTENT;
+                    gifSearchView.setLayoutParams(lp);
                 }
                 if (emojiPalettes != null) emojiPalettes.setVisibility(View.GONE);
+                // Only show the keyboard when the user explicitly wants to type (e.g. taps search)
                 if (mainKeyboard != null) mainKeyboard.setVisibility(gifWantsKeysVisible ? View.VISIBLE : View.GONE);
                 if (suggestionStrip != null) suggestionStrip.setVisibility(View.GONE);
                 if (emojiTabStrip != null) emojiTabStrip.setVisibility(View.VISIBLE);
@@ -1977,6 +1975,14 @@ public class LatinIME extends InputMethodService implements
      * Change UI mode and immediately apply it.
      */
     public void setUiMode(UiMode mode) {
+        if (mode == UiMode.GIF) {
+            // When entering GIF mode fresh (no results yet), show keyboard so user can type.
+            // It will be hidden again once results load (onGifResultsVisible → setUiMode(GIF)
+            // is NOT called again; keyboard stays visible until user explicitly hides it).
+            gifWantsKeysVisible = true;
+        } else if (mode == UiMode.KEYS) {
+            gifWantsKeysVisible = true;
+        }
         uiMode = mode;
         applyUiMode();
     }
