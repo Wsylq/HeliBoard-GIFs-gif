@@ -81,5 +81,11 @@
 
     <!-- text used inside the GIF search EditText -->
     <color name="gif_search_text">#FF000000</color>        <!-- black -->
-    <color name="gif_search_hint">#80000000</color>        <!-- 50% black -->    
+    <color name="gif_search_hint">#80000000</color>        <!-- 50% black -->
+    <!-- GIF panel UI colors (light theme) -->
+    <color name="gif_panel_background">#F0F2F5</color>
+    <color name="gif_header_background">#2D3A4A</color>
+    <color name="gif_recents_header_background">#263040</color>
+    <color name="gif_icon_tint">#CCFFFFFF</color>
+    <color name="gif_accent">#5B9BD5</color>
 </resources>

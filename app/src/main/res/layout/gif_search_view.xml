@@ -1,51 +1,111 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- GIF search panel — full-height, dark header matching reference UI -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
+    android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="8dp"
     android:clickable="true"
     android:focusable="true"
-    android:focusableInTouchMode="true"
-    android:background="@android:color/transparent">
+    android:focusableInTouchMode="false"
+    android:background="@color/gif_panel_background">
 
+    <!-- ── Header bar ── -->
     <LinearLayout
+        android:id="@+id/gif_header"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
+        android:layout_height="48dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp"
+        android:background="@color/gif_header_background">
 
+        <!-- Settings gear -->
+        <ImageButton
+            android:id="@+id/btn_gif_settings"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_settings_default"
+            android:contentDescription="@string/settings_screen_gif_tenor"
+            android:background="@null"
+            android:tint="@color/gif_icon_tint"
+            android:scaleType="center" />
+
+        <!-- Search field — programmatic input only, no system keyboard -->
         <EditText
             android:id="@+id/gif_query_field"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
             android:layout_weight="1"
-            android:hint="Search GIFs"
+            android:hint="@string/gif_search_hint"
             android:inputType="text"
             android:imeOptions="actionSearch"
             android:focusable="true"
             android:focusableInTouchMode="false"
             android:cursorVisible="true"
+            android:background="@null"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:singleLine="true"
             android:textColor="@color/gif_search_text"
-            android:textColorHint="@color/gif_search_hint" />
-        <!-- Clear text button -->
+            android:textColorHint="@color/gif_search_hint"
+            android:textSize="16sp" />
+
+        <!-- Clear / close button — shows ✕ when query non-empty, otherwise closes panel -->
         <ImageButton
-            android:id="@+id/btn_clear_gif"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:id="@+id/btn_gif_close"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:src="@android:drawable/ic_menu_close_clear_cancel"
             android:contentDescription="@string/clear_text"
-            android:visibility="gone"
-            android:background="@android:drawable/btn_default" />
-
-        <ImageButton
-            android:id="@+id/btn_search_gif"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:src="@android:drawable/ic_menu_search"
-            android:contentDescription="Search GIFs" />
+            android:background="@null"
+            android:tint="@color/gif_icon_tint"
+            android:scaleType="center" />
 
     </LinearLayout>
 
+    <!-- ── Recent searches header (shown when query is empty and recents exist) ── -->
+    <LinearLayout
+        android:id="@+id/gif_recents_header"
+        android:layout_width="match_parent"
+        android:layout_height="36dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:background="@color/gif_recents_header_background"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/gif_recent_searches"
+            android:textColor="@color/gif_search_hint"
+            android:textSize="12sp"
+            android:textAllCaps="false" />
+
+        <TextView
+            android:id="@+id/btn_gif_clear_recents"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/gif_clear_all"
+            android:textColor="@color/gif_accent"
+            android:textSize="12sp"
+            android:padding="4dp"
+            android:clickable="true"
+            android:focusable="true" />
+
+    </LinearLayout>
+
+    <!-- ── Recent searches list (shown when query is empty) ── -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/gif_recents_list"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+    <!-- ── GIF results grid ── -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/gif_results_grid"
         android:layout_width="match_parent"

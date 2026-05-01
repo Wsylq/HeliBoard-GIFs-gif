@@ -26,4 +26,10 @@
     <!-- text used inside the GIF search EditText -->
     <color name="gif_search_text">#FFFFFFFF</color>        <!-- white -->
     <color name="gif_search_hint">#80FFFFFF</color>        <!-- 50% white -->
+    <!-- GIF panel UI colors (night/dark theme) -->
+    <color name="gif_panel_background">#1A1F2B</color>
+    <color name="gif_header_background">#1E2535</color>
+    <color name="gif_recents_header_background">#161C28</color>
+    <color name="gif_icon_tint">#CCFFFFFF</color>
+    <color name="gif_accent">#5B9BD5</color>
 </resources>

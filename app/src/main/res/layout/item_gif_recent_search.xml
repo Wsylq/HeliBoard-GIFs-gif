@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Row for a single recent GIF search entry -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingStart="12dp"
+    android:paddingEnd="4dp"
+    android:background="@null"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Clock icon -->
+    <ImageView
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:src="@android:drawable/ic_menu_recent_history"
+        android:tint="@color/gif_search_hint"
+        android:scaleType="fitCenter"
+        android:contentDescription="@null" />
+
+    <!-- Search term -->
+    <TextView
+        android:id="@+id/recent_search_text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:paddingStart="12dp"
+        android:paddingEnd="8dp"
+        android:textColor="@color/gif_search_text"
+        android:textSize="15sp"
+        android:singleLine="true"
+        android:ellipsize="end" />
+
+    <!-- Remove button -->
+    <ImageButton
+        android:id="@+id/btn_remove_recent"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:src="@android:drawable/ic_menu_close_clear_cancel"
+        android:contentDescription="@string/clear_text"
+        android:background="@null"
+        android:tint="@color/gif_search_hint"
+        android:scaleType="center" />
+
+</LinearLayout>

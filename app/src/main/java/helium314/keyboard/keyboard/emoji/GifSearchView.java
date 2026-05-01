@@ -114,7 +114,6 @@ public class GifSearchView extends LinearLayout {
     }
     private static final String TAG = "GifSearchView";
     private EditText queryField;
-    private ImageButton searchButton;
     private RecyclerView grid;
     private GifAdapter adapter;
     private GifActionsListener actionsListener;
@@ -136,6 +135,113 @@ public class GifSearchView extends LinearLayout {
     }
     private int spanCount = 2; // will be recalculated at runtime
 
+    // ── Recent searches ──────────────────────────────────────────────────────
+    private static final String PREFS_RECENTS = "gif_recent_searches";
+    private static final String KEY_RECENTS   = "recents";
+    private static final int    MAX_RECENTS   = 10;
+
+    private java.util.List<String> loadRecents() {
+        android.content.SharedPreferences sp =
+                getContext().getSharedPreferences(PREFS_RECENTS, Context.MODE_PRIVATE);
+        String raw = sp.getString(KEY_RECENTS, "");
+        java.util.List<String> list = new java.util.ArrayList<>();
+        if (raw != null && !raw.isEmpty()) {
+            for (String s : raw.split("\n")) {
+                if (!s.isEmpty()) list.add(s);
+            }
+        }
+        return list;
+    }
+
+    private void saveRecents(java.util.List<String> list) {
+        StringBuilder sb = new StringBuilder();
+        for (String s : list) sb.append(s).append('\n');
+        getContext().getSharedPreferences(PREFS_RECENTS, Context.MODE_PRIVATE)
+                .edit().putString(KEY_RECENTS, sb.toString()).apply();
+    }
+
+    private void addRecent(String query) {
+        if (query == null || query.trim().isEmpty()) return;
+        java.util.List<String> list = loadRecents();
+        list.remove(query);          // remove duplicate
+        list.add(0, query);          // most-recent first
+        if (list.size() > MAX_RECENTS) list = list.subList(0, MAX_RECENTS);
+        saveRecents(list);
+    }
+
+    private void removeRecent(String query) {
+        java.util.List<String> list = loadRecents();
+        list.remove(query);
+        saveRecents(list);
+    }
+
+    // ── Debounce handler for search-as-you-type ───────────────────────────────
+    private final android.os.Handler searchHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private static final long SEARCH_DEBOUNCE_MS = 600;
+
+    // ── Recent-search adapter ─────────────────────────────────────────────────
+    private RecyclerView recentsListView;
+    private View recentsHeader;
+    private android.widget.TextView clearRecentsBtn;
+
+    private void refreshRecentsUi() {
+        java.util.List<String> recents = loadRecents();
+        boolean hasQuery = queryField != null
+                && queryField.getText() != null
+                && queryField.getText().length() > 0;
+        boolean showRecents = !hasQuery && !recents.isEmpty();
+        if (recentsHeader != null)
+            recentsHeader.setVisibility(showRecents ? View.VISIBLE : View.GONE);
+        if (recentsListView != null)
+            recentsListView.setVisibility(showRecents ? View.VISIBLE : View.GONE);
+        if (recentsListView != null && recentsListView.getAdapter() instanceof RecentsAdapter) {
+            ((RecentsAdapter) recentsListView.getAdapter()).setItems(recents);
+        }
+    }
+
+    private class RecentsAdapter extends RecyclerView.Adapter<RecentsAdapter.VH> {
+        private java.util.List<String> items = new java.util.ArrayList<>();
+
+        void setItems(java.util.List<String> list) {
+            items = new java.util.ArrayList<>(list);
+            notifyDataSetChanged();
+        }
+
+        @Override
+        public VH onCreateViewHolder(ViewGroup parent, int viewType) {
+            View v = android.view.LayoutInflater.from(parent.getContext())
+                    .inflate(R.layout.item_gif_recent_search, parent, false);
+            return new VH(v);
+        }
+
+        @Override
+        public void onBindViewHolder(VH holder, int position) {
+            String term = items.get(position);
+            holder.text.setText(term);
+            holder.itemView.setOnClickListener(v -> {
+                queryField.setText(term);
+                queryField.setSelection(term.length());
+                performSearch(term);
+            });
+            holder.removeBtn.setOnClickListener(v -> {
+                removeRecent(term);
+                refreshRecentsUi();
+            });
+        }
+
+        @Override public int getItemCount() { return items.size(); }
+
+        class VH extends RecyclerView.ViewHolder {
+            android.widget.TextView text;
+            android.widget.ImageButton removeBtn;
+            VH(View v) {
+                super(v);
+                text      = v.findViewById(R.id.recent_search_text);
+                removeBtn = v.findViewById(R.id.btn_remove_recent);
+            }
+        }
+    }
+
     public GifSearchView(Context context, AttributeSet attrs) {
         super(context, attrs);
         // Inflate layout and ensure focus/touch configuration
@@ -144,34 +250,84 @@ public class GifSearchView extends LinearLayout {
         setFocusable(true);
         setFocusableInTouchMode(false);
         setDescendantFocusability(FOCUS_AFTER_DESCENDANTS);
+
         queryField = findViewById(R.id.gif_query_field);
-        // Notify editing state when query changes
+
+        // ── Settings gear ──────────────────────────────────────────────────
+        ImageButton settingsBtn = findViewById(R.id.btn_gif_settings);
+        if (settingsBtn != null) {
+            settingsBtn.setOnClickListener(v -> {
+                try {
+                    android.content.Intent intent = new android.content.Intent(
+                            context, helium314.keyboard.latin.TenorSettingsActivity.class);
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(intent);
+                } catch (Exception e) {
+                    Log.w(TAG, "Cannot open GIF settings: " + e);
+                }
+            });
+        }
+
+        // ── Close / clear button ───────────────────────────────────────────
+        clearButton = findViewById(R.id.btn_gif_close);
+        if (clearButton != null) {
+            clearButton.setOnClickListener(v -> {
+                if (queryField.getText() != null && queryField.getText().length() > 0) {
+                    resetGifUi();
+                } else {
+                    // No query — close the GIF panel entirely
+                    if (actionsListener != null) actionsListener.onGifInsertCompleted();
+                }
+            });
+        }
+
+        // ── Recent searches UI ─────────────────────────────────────────────
+        recentsHeader   = findViewById(R.id.gif_recents_header);
+        recentsListView = findViewById(R.id.gif_recents_list);
+        clearRecentsBtn = findViewById(R.id.btn_gif_clear_recents);
+        if (clearRecentsBtn != null) {
+            clearRecentsBtn.setOnClickListener(v -> {
+                saveRecents(new java.util.ArrayList<>());
+                refreshRecentsUi();
+            });
+        }
+        if (recentsListView != null) {
+            recentsListView.setLayoutManager(
+                    new androidx.recyclerview.widget.LinearLayoutManager(context));
+            recentsListView.setAdapter(new RecentsAdapter());
+        }
+
+        // ── Query field text watcher — debounced search-as-you-type ───────
         queryField.addTextChangedListener(new android.text.TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override public void afterTextChanged(android.text.Editable s) {
                 boolean wantsKeys = (s == null || s.length() == 0) || !hasResults();
                 if (actionsListener != null) actionsListener.onGifEditingStateChanged(wantsKeys);
-                // Show or hide clear button
-                if (clearButton != null) {
-                    clearButton.setVisibility(s != null && s.length() > 0 ? View.VISIBLE : View.GONE);
+                // Show/hide recents when field is cleared
+                refreshRecentsUi();
+                // Debounced auto-search
+                searchHandler.removeCallbacksAndMessages(null);
+                if (s != null && s.length() > 0) {
+                    final String query = s.toString();
+                    searchHandler.postDelayed(() -> performSearch(query), SEARCH_DEBOUNCE_MS);
                 }
             }
         });
-        searchButton = findViewById(R.id.btn_search_gif);
-        // Clear button
-        clearButton = findViewById(R.id.btn_clear_gif);
-        clearButton.setVisibility(View.GONE);
-        clearButton.setOnClickListener(v -> resetGifUi());
-        // Ensure search button is clickable and has a background for hit-testing
-        searchButton.setClickable(true);
-        searchButton.setFocusable(false);
-        searchButton.setFocusableInTouchMode(false);
-        searchButton.setBackgroundResource(android.R.drawable.btn_default);
+
+        // IME action (Enter / Search key) triggers immediate search
+        queryField.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                searchHandler.removeCallbacksAndMessages(null);
+                performSearch(queryField.getText().toString());
+                return true;
+            }
+            return false;
+        });
+
+        // ── Grid setup ─────────────────────────────────────────────────────
         grid = findViewById(R.id.gif_results_grid);
-        // Setup Glide for animated previews
         glide = Glide.with(this);
-        // Mixed-height rows need dynamic measurement
         grid.setHasFixedSize(false);
         grid.setItemViewCacheSize(20);
         grid.addOnScrollListener(new RecyclerView.OnScrollListener() {
@@ -183,10 +339,10 @@ public class GifSearchView extends LinearLayout {
                 }
             }
         });
-        // Endless scroll for loading more GIFs
+        // Endless scroll
         grid.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override public void onScrolled(RecyclerView rv, int dx, int dy) {
-                if (dy <= 0) return; // only down
+                if (dy <= 0) return;
                 if (isLoading || !hasMore) return;
                 RecyclerView.LayoutManager lm = rv.getLayoutManager();
                 if (!(lm instanceof StaggeredGridLayoutManager)) return;
@@ -196,8 +352,7 @@ public class GifSearchView extends LinearLayout {
                 sglm.findLastVisibleItemPositions(into);
                 int lastVisible = -1;
                 for (int v : into) if (v > lastVisible) lastVisible = v;
-                int threshold = 6;
-                if (total > 0 && lastVisible >= total - threshold) {
+                if (total > 0 && lastVisible >= total - 6) {
                     GifSearchView.this.loadNextPage();
                 }
             }
@@ -206,10 +361,7 @@ public class GifSearchView extends LinearLayout {
         grid.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
             int w = grid.getWidth();
             if (w <= 0) return;
-
-            // desired minimum cell size in dp (tweak 120–140dp to taste)
             int minCellPx = (int) (getResources().getDisplayMetrics().density * 128);
-
             int cols = Math.max(2, Math.min(3, w / Math.max(1, minCellPx)));
             if (cols != spanCount) {
                 spanCount = cols;
@@ -217,18 +369,16 @@ public class GifSearchView extends LinearLayout {
                 adapter.notifyDataSetChanged();
             }
         });
-        // Ensure grid is clickable to intercept taps
         grid.setClickable(true);
         grid.setFocusable(true);
         grid.setFocusableInTouchMode(true);
-        // set up grid and adapter
         layoutManager = new StaggeredGridLayoutManager(spanCount, StaggeredGridLayoutManager.VERTICAL);
         layoutManager.setGapStrategy(StaggeredGridLayoutManager.GAP_HANDLING_MOVE_ITEMS_BETWEEN_SPANS);
         grid.setLayoutManager(layoutManager);
         adapter = new GifAdapter();
         adapter.setHasStableIds(true);
         grid.setAdapter(adapter);
-        // Add single-tap listener for grid items (no GestureDetector gate — ACTION_UP is sufficient)
+        // Single-tap listener (no GestureDetector gate)
         grid.addOnItemTouchListener(new RecyclerView.OnItemTouchListener() {
             @Override
             public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent e) {
@@ -245,24 +395,9 @@ public class GifSearchView extends LinearLayout {
             @Override public void onTouchEvent(RecyclerView rv, MotionEvent e) { }
             @Override public void onRequestDisallowInterceptTouchEvent(boolean disallow) { }
         });
-        // Ensure interactive children receive clicks
-        grid.setClickable(true);
-        grid.setFocusable(true);
-        grid.setFocusableInTouchMode(true);
-        searchButton.setClickable(true);
-        searchButton.setFocusable(true);
-        // search on button click or IME action
-        searchButton.setOnClickListener(v -> {
-            Log.d(TAG, "searchButton onClick");
-            performSearch(queryField.getText().toString());
-        });
-        queryField.setOnEditorActionListener((v, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                performSearch(queryField.getText().toString());
-                return true;
-            }
-            return false;
-        });
+
+        // Show recents on first open
+        refreshRecentsUi();
     }
 
 /*    @Override
@@ -317,7 +452,7 @@ public class GifSearchView extends LinearLayout {
     }
 
     public ImageButton getSearchButton() {
-        return searchButton;
+        return null; // search button removed; search is triggered automatically
     }
 
     public RecyclerView getGrid() {
@@ -339,6 +474,8 @@ public class GifSearchView extends LinearLayout {
             return;
         }
         Log.d(TAG, "Klipy enabled; using API key length=" + key.length());
+        // Save to recent searches
+        addRecent(query);
         // Reset pagination state for new search
         currentQuery = query;
         isLoading = false;
@@ -388,6 +525,7 @@ public class GifSearchView extends LinearLayout {
      */
     private void resetGifUi() {
         try {
+            searchHandler.removeCallbacksAndMessages(null);
             EditText q = findViewById(R.id.gif_query_field);
             if (q != null) q.setText("");
             if (adapter != null) {
@@ -397,6 +535,8 @@ public class GifSearchView extends LinearLayout {
             if (grid != null) grid.scrollToPosition(0);
             // After reset, editing state: show keys
             if (actionsListener != null) actionsListener.onGifEditingStateChanged(true);
+            // Show recents again
+            refreshRecentsUi();
         } catch (Throwable t) {
             Log.w(TAG, "resetGifUi: " + t);
         }

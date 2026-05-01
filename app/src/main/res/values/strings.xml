@@ -907,6 +907,10 @@ New dictionary:
     <string name="landscape">Landscape</string>
     <!-- Button description to clear GIF search text -->
     <string name="clear_text">Clear text</string>
+    <!-- GIF search panel UI strings -->
+    <string name="gif_search_hint">Search GIFs</string>
+    <string name="gif_recent_searches">Recent searches</string>
+    <string name="gif_clear_all">Clear all</string>
     <string name="enable_tenor_search">Enable Klipy GIF search</string>
     <string name="enter_tenor_api_key">Enter Klipy API key</string>
     <string name="get_tenor_api_key">Get an API key</string>
