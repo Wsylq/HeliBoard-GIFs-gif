@@ -1977,9 +1977,19 @@ public class LatinIME extends InputMethodService implements
     public void setUiMode(UiMode mode) {
         if (mode == UiMode.GIF) {
             // When entering GIF mode fresh (no results yet), show keyboard so user can type.
-            // It will be hidden again once results load (onGifResultsVisible → setUiMode(GIF)
-            // is NOT called again; keyboard stays visible until user explicitly hides it).
             gifWantsKeysVisible = true;
+            // Tell the GIF panel what MIME types the current editor supports
+            if (mInputView != null) {
+                GifSearchView gifView = mInputView.findViewById(R.id.gif_search_view);
+                if (gifView != null) {
+                    android.view.inputmethod.EditorInfo ei = getCurrentInputEditorInfo();
+                    String[] mimes = (ei != null)
+                            ? androidx.core.view.inputmethod.EditorInfoCompat.getContentMimeTypes(ei)
+                            : null;
+                    String pkg = (ei != null && ei.packageName != null) ? ei.packageName : "";
+                    gifView.updateEditorSupport(mimes, pkg);
+                }
+            }
         } else if (mode == UiMode.KEYS) {
             gifWantsKeysVisible = true;
         }

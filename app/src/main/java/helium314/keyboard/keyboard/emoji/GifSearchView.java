@@ -125,6 +125,8 @@ public class GifSearchView extends LinearLayout {
     @Nullable private String nextPos = null;
     @Nullable private String currentQuery = null;
     private ImageButton clearButton;
+    // Whether the current editor supports image/gif via commitContent
+    private boolean editorSupportsGif = true; // optimistic default until checked
     // Helpers for editing state
     public boolean hasResults() {
         return adapter != null && adapter.getItemCount() > 0;
@@ -332,19 +334,30 @@ public class GifSearchView extends LinearLayout {
         adapter = new GifAdapter();
         adapter.setHasStableIds(true);
         grid.setAdapter(adapter);
-        // Single-tap listener (no GestureDetector gate)
+        // Tap listener with scroll detection — only fire click if finger didn't scroll
+        final float[] downXY = new float[2];
+        final float touchSlop = android.view.ViewConfiguration.get(context).getScaledTouchSlop();
         grid.addOnItemTouchListener(new RecyclerView.OnItemTouchListener() {
             @Override
             public boolean onInterceptTouchEvent(RecyclerView rv, MotionEvent e) {
-                if (e.getActionMasked() != MotionEvent.ACTION_UP) return false;
-                View child = rv.findChildViewUnder(e.getX(), e.getY());
-                if (child != null) {
-                    int pos = rv.getChildAdapterPosition(child);
-                    Log.d(TAG, "gif thumbnail tap id=" + pos);
-                    child.performClick();
-                    return true;
+                switch (e.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downXY[0] = e.getX();
+                        downXY[1] = e.getY();
+                        return false;
+                    case MotionEvent.ACTION_UP:
+                        float dx = Math.abs(e.getX() - downXY[0]);
+                        float dy = Math.abs(e.getY() - downXY[1]);
+                        if (dx > touchSlop || dy > touchSlop) return false; // was a scroll
+                        View child = rv.findChildViewUnder(e.getX(), e.getY());
+                        if (child != null) {
+                            child.performClick();
+                            return true;
+                        }
+                        return false;
+                    default:
+                        return false;
                 }
-                return false;
             }
             @Override public void onTouchEvent(RecyclerView rv, MotionEvent e) { }
             @Override public void onRequestDisallowInterceptTouchEvent(boolean disallow) { }
@@ -470,6 +483,47 @@ public class GifSearchView extends LinearLayout {
         this.actionsListener = l;
         // Show suggestion chips on first open
         refreshSuggestionsUi();
+    }
+
+    /**
+     * Called by LatinIME when the GIF panel becomes visible, with the current editor's
+     * declared MIME types. Updates the UI to show a warning if GIFs can't be sent.
+     */
+    public void updateEditorSupport(String[] mimes, String editorPackage) {
+        boolean isWhatsApp = editorPackage != null && editorPackage.startsWith("com.whatsapp");
+        boolean supportsGif = false;
+        if (mimes != null) {
+            for (String m : mimes) {
+                if (android.content.ClipDescription.compareMimeTypes(m, "image/gif")
+                        || android.content.ClipDescription.compareMimeTypes(m, "image/*")) {
+                    supportsGif = true;
+                    break;
+                }
+            }
+        }
+        // WhatsApp declares image/gif but routes it through sticker pipeline — treat as unsupported
+        editorSupportsGif = supportsGif && !isWhatsApp;
+        updateGifSupportBanner();
+    }
+
+    private void updateGifSupportBanner() {
+        // Reuse the suggestions scroll area to show a warning when GIFs can't be sent
+        if (suggestionsScroll == null) return;
+        if (!editorSupportsGif) {
+            // Show a warning banner instead of suggestion chips
+            if (suggestionsChips != null) {
+                suggestionsChips.removeAllViews();
+                android.widget.TextView warn = new android.widget.TextView(getContext());
+                warn.setText("⚠ This app doesn't support GIFs from keyboards");
+                warn.setTextColor(0xFFFFAA00);
+                warn.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 12);
+                warn.setPadding(0, 0, 0, 0);
+                suggestionsChips.addView(warn);
+            }
+            suggestionsScroll.setVisibility(View.VISIBLE);
+        } else {
+            refreshSuggestionsUi();
+        }
     }
     /**
      * Reset the GIF UI: clear query and results.
@@ -989,6 +1043,7 @@ public class GifSearchView extends LinearLayout {
             // Gather editor-declared MIME types (may be empty even if the app supports images via its own UI)
             String[] mimes = androidx.core.view.inputmethod.EditorInfoCompat.getContentMimeTypes(ei);
             boolean noRichContent = (mimes == null || mimes.length == 0);
+
             boolean supportsGif = false;
             if (!noRichContent) {
                 StringBuilder sb = new StringBuilder();
@@ -1007,119 +1062,58 @@ public class GifSearchView extends LinearLayout {
             final String authority = getContext().getPackageName() + ".fileprovider";
             final File gifFile = new File(getContext().getCacheDir(), "klipy_gifs/" + item.id + ".gif");
 
-            // If the editor does not declare any rich content MIME types, skip commit and SHARE directly
+            // If the editor does not declare any rich content MIME types, use ACTION_SEND
             if (noRichContent) {
                 if (gifFile.exists()) {
                     Uri shareGif = FileProvider.getUriForFile(getContext(), authority, gifFile);
-                    Log.d(TAG, "Falling back to ACTION_SEND (no MIME types declared) with GIF");
-                    shareGifFallback(
-                            getContext().getApplicationContext(),
-                            shareGif,
-                            gifFile,
-                            "image/gif",
-                            item.id + ".gif"
-                    );
-                    return;
+                    shareGifFallback(getContext().getApplicationContext(), shareGif, gifFile, "image/gif", item.id + ".gif");
                 } else {
-                    // Try PNG first-frame if GIF file missing for any reason
-                    File pngFile = convertGifToPngFirstFrame(gifFile);
-                    if (pngFile != null && pngFile.exists()) {
-                        Uri sharePng = FileProvider.getUriForFile(getContext(), authority, pngFile);
-                        Log.d(TAG, "Falling back to ACTION_SEND (no MIME types declared) with PNG");
-                        shareGifFallback(
-                                getContext().getApplicationContext(),
-                                sharePng,
-                                pngFile,
-                                "image/png",
-                                item.id + ".png"
-                        );
-                        return;
-                    }
-                    Log.e(TAG, "Share aborted: no file to share");
                     Toast.makeText(getContext(), "This app doesn't accept images from the keyboard", Toast.LENGTH_SHORT).show();
-                    return;
                 }
+                return;
             }
 
-            // Try commitContent with GIF first
+            // WhatsApp does not support commitContent for GIFs from external keyboards.
+            // It routes all keyboard-committed images through its sticker pipeline which rejects them.
+            // There is no API to insert directly into the current WhatsApp chat from an external keyboard.
+            String editorPkg = (ei.packageName != null) ? ei.packageName : "";
+            boolean isWhatsApp = editorPkg.equals("com.whatsapp")
+                    || editorPkg.equals("com.whatsapp.w4b")
+                    || editorPkg.startsWith("com.whatsapp");
+            if (isWhatsApp) {
+                Toast.makeText(getContext(),
+                        "WhatsApp doesn't support GIFs from external keyboards. Use WhatsApp's built-in GIF button (the smiley icon).",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+
+            // Try commitContent with GIF
             if (tryCommit(ic, ei, uri, "image/gif")) {
                 resetGifUi();
                 GifSearchView.this.setVisibility(View.GONE);
                 InputMethodService ims2 = getImeService();
                 if (ims2 != null) {
-                    try {
-                        helium314.keyboard.keyboard.KeyboardSwitcher.getInstance().setAlphabetKeyboard();
-                    } catch (Throwable t) {
-                        Log.w(TAG, "Error switching to alphabet keyboard: " + t);
-                    }
+                    try { helium314.keyboard.keyboard.KeyboardSwitcher.getInstance().setAlphabetKeyboard(); }
+                    catch (Throwable t) { Log.w(TAG, "keyboard switch failed: " + t); }
                 }
-                if (actionsListener != null) {
-                    actionsListener.onGifInsertCompleted();
-                }
+                if (actionsListener != null) actionsListener.onGifInsertCompleted();
                 return;
             }
 
-            // Try static PNG first frame
-            File pngFile = convertGifToPngFirstFrame(gifFile);
-            if (pngFile != null) {
-                Uri pngUri = FileProvider.getUriForFile(getContext(), authority, pngFile);
-                if (tryCommit(ic, ei, pngUri, "image/png")) {
-                    resetGifUi();
-                    GifSearchView.this.setVisibility(View.GONE);
-                    InputMethodService ims3 = getImeService();
-                    if (ims3 != null) {
-                        try {
-                            helium314.keyboard.keyboard.KeyboardSwitcher.getInstance().setAlphabetKeyboard();
-                        } catch (Throwable t) {
-                            Log.w(TAG, "Error switching to alphabet keyboard: " + t);
-                        }
-                    }
-                    if (actionsListener != null) {
-                        actionsListener.onGifInsertCompleted();
-                    }
-                    return;
-                }
-            }
-
-            // All commitContent attempts failed; use ACTION_SEND fallback (more reliable for SMS)
+            // commitContent failed — use ACTION_SEND fallback
             if (gifFile.exists()) {
                 Uri shareGif = FileProvider.getUriForFile(getContext(), authority, gifFile);
-                Log.d(TAG, "commitContent failed; falling back to ACTION_SEND with GIF");
-                shareGifFallback(
-                        getContext().getApplicationContext(),
-                        shareGif,
-                        gifFile,
-                        "image/gif",
-                        item.id + ".gif"
-                );
-                return;
-            } else if (pngFile != null && pngFile.exists()) {
-                Uri sharePng = FileProvider.getUriForFile(getContext(), authority, pngFile);
-                Log.d(TAG, "commitContent failed; falling back to ACTION_SEND with PNG");
-                shareGifFallback(
-                        getContext().getApplicationContext(),
-                        sharePng,
-                        pngFile,
-                        "image/png",
-                        item.id + ".png"
-                );
-                return;
+                shareGifFallback(getContext().getApplicationContext(), shareGif, gifFile, "image/gif", item.id + ".gif");
             } else {
-                Log.e(TAG, "All commit and share fallbacks failed; no file to share");
                 Toast.makeText(getContext(), "This app doesn't accept images from the keyboard", Toast.LENGTH_SHORT).show();
             }
         }
 
-    /**
-     * Resolve the hosting InputMethodService by traversing the context chain.
-     */
     private InputMethodService getImeService() {
         Context c = getContext();
         int guard = 0;
         while (c instanceof ContextWrapper && guard < 10) {
-            if (c instanceof InputMethodService) {
-                return (InputMethodService) c;
-            }
+            if (c instanceof InputMethodService) return (InputMethodService) c;
             c = ((ContextWrapper) c).getBaseContext();
             guard++;
         }
