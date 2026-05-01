@@ -127,6 +127,7 @@ public class GifSearchView extends LinearLayout {
     private ImageButton clearButton;
     // Whether the current editor supports image/gif via commitContent
     private boolean editorSupportsGif = true; // optimistic default until checked
+    private boolean editorIsWhatsApp = false; // set by updateEditorSupport
     // Helpers for editing state
     public boolean hasResults() {
         return adapter != null && adapter.getItemCount() > 0;
@@ -491,18 +492,20 @@ public class GifSearchView extends LinearLayout {
      */
     public void updateEditorSupport(String[] mimes, String editorPackage) {
         boolean isWhatsApp = editorPackage != null && editorPackage.startsWith("com.whatsapp");
+        editorIsWhatsApp = isWhatsApp;
         boolean supportsGif = false;
         if (mimes != null) {
             for (String m : mimes) {
                 if (android.content.ClipDescription.compareMimeTypes(m, "image/gif")
-                        || android.content.ClipDescription.compareMimeTypes(m, "image/*")) {
+                        || android.content.ClipDescription.compareMimeTypes(m, "image/*")
+                        || m.contains("wasticker")) {
                     supportsGif = true;
                     break;
                 }
             }
         }
-        // WhatsApp declares image/gif but routes it through sticker pipeline — treat as unsupported
-        editorSupportsGif = supportsGif && !isWhatsApp;
+        // WhatsApp now handled via animated WebP sticker conversion — treat as supported
+        editorSupportsGif = supportsGif || isWhatsApp;
         updateGifSupportBanner();
     }
 
@@ -738,8 +741,7 @@ public class GifSearchView extends LinearLayout {
                  .fitCenter()
                  .into(holder.image);
             holder.image.setOnClickListener(v -> {
-                String fullUrl = item.getFullUrl();
-                Log.d(TAG, "thumbnail onClick id=" + item.id + " fullUrl=" + fullUrl);
+                Log.d(TAG, "thumbnail onClick id=" + item.id);
                 new DownloadAndSendTask(item).execute(item);
             });
         }
@@ -947,7 +949,10 @@ public class GifSearchView extends LinearLayout {
     /** Downloads the full GIF and commits to the editor. */
     private class DownloadAndSendTask extends AsyncTask<GifItem, Void, Uri> {
         private final GifItem item;
-        DownloadAndSendTask(GifItem item) { this.item = item; }
+
+        DownloadAndSendTask(GifItem item) {
+            this.item = item;
+        }
         @Override protected Uri doInBackground(GifItem... params) {
             try {
                 // Determine which variant to download based on share settings
@@ -1008,7 +1013,6 @@ public class GifSearchView extends LinearLayout {
                     Log.e(TAG, "Downloaded file empty, aborting insert");
                     return null;
                 }
-                // Share via FileProvider
                 String authority = getContext().getPackageName() + ".fileprovider";
                 return FileProvider.getUriForFile(getContext(), authority, out);
             } catch (Exception e) {
@@ -1025,7 +1029,7 @@ public class GifSearchView extends LinearLayout {
             }
             InputMethodService ims = getImeService();
             if (ims == null) {
-                Log.e(TAG, "Insert aborted: could not resolve InputMethodService from context=" + getContext());
+                Log.e(TAG, "Insert aborted: no InputMethodService");
                 return;
             }
             InputConnection ic = ims.getCurrentInputConnection();
@@ -1034,82 +1038,39 @@ public class GifSearchView extends LinearLayout {
                 Log.e(TAG, "Insert aborted: ic=" + ic + " ei=" + ei);
                 return;
             }
-            try {
-                ic.finishComposingText();
-            } catch (Throwable t) {
-                Log.w(TAG, "finishComposingText failed: " + t);
-            }
-
-            // Gather editor-declared MIME types (may be empty even if the app supports images via its own UI)
-            String[] mimes = androidx.core.view.inputmethod.EditorInfoCompat.getContentMimeTypes(ei);
-            boolean noRichContent = (mimes == null || mimes.length == 0);
-
-            boolean supportsGif = false;
-            if (!noRichContent) {
-                StringBuilder sb = new StringBuilder();
-                for (String m : mimes) {
-                    sb.append(m).append(' ');
-                    Log.d(TAG, "Editor supports MIME: " + m);
-                    if (ClipDescription.compareMimeTypes(m, "image/gif")) {
-                        supportsGif = true;
-                    }
-                }
-                Log.d(TAG, "Editor supports MIME(s): " + sb.toString().trim());
-            } else {
-                Log.d(TAG, "Editor has no declared content MIME types (commitContent likely unsupported)");
-            }
+            try { ic.finishComposingText(); } catch (Throwable ignored) {}
 
             final String authority = getContext().getPackageName() + ".fileprovider";
             final File gifFile = new File(getContext().getCacheDir(), "klipy_gifs/" + item.id + ".gif");
 
-            // If the editor does not declare any rich content MIME types, use ACTION_SEND
-            if (noRichContent) {
-                if (gifFile.exists()) {
-                    Uri shareGif = FileProvider.getUriForFile(getContext(), authority, gifFile);
-                    shareGifFallback(getContext().getApplicationContext(), shareGif, gifFile, "image/gif", item.id + ".gif");
-                } else {
-                    Toast.makeText(getContext(), "This app doesn't accept images from the keyboard", Toast.LENGTH_SHORT).show();
-                }
-                return;
-            }
-
-            // WhatsApp does not support commitContent for GIFs from external keyboards.
-            // It routes all keyboard-committed images through its sticker pipeline which rejects them.
-            // There is no API to insert directly into the current WhatsApp chat from an external keyboard.
-            String editorPkg = (ei.packageName != null) ? ei.packageName : "";
-            boolean isWhatsApp = editorPkg.equals("com.whatsapp")
-                    || editorPkg.equals("com.whatsapp.w4b")
-                    || editorPkg.startsWith("com.whatsapp");
-            if (isWhatsApp) {
-                Toast.makeText(getContext(),
-                        "WhatsApp doesn't support GIFs from external keyboards. Use WhatsApp's built-in GIF button (the smiley icon).",
-                        Toast.LENGTH_LONG).show();
-                return;
-            }
-
-            // Try commitContent with GIF
+            // Try commitContent(image/gif) — works for Signal, Telegram, and most apps.
+            // WhatsApp may show a sticker error on some GIFs but works on others.
             if (tryCommit(ic, ei, uri, "image/gif")) {
-                resetGifUi();
-                GifSearchView.this.setVisibility(View.GONE);
-                InputMethodService ims2 = getImeService();
-                if (ims2 != null) {
-                    try { helium314.keyboard.keyboard.KeyboardSwitcher.getInstance().setAlphabetKeyboard(); }
-                    catch (Throwable t) { Log.w(TAG, "keyboard switch failed: " + t); }
-                }
-                if (actionsListener != null) actionsListener.onGifInsertCompleted();
+                onSendSuccess();
                 return;
             }
 
-            // commitContent failed — use ACTION_SEND fallback
+            // commitContent failed — fall back to ACTION_SEND share sheet
             if (gifFile.exists()) {
                 Uri shareGif = FileProvider.getUriForFile(getContext(), authority, gifFile);
                 shareGifFallback(getContext().getApplicationContext(), shareGif, gifFile, "image/gif", item.id + ".gif");
             } else {
-                Toast.makeText(getContext(), "This app doesn't accept images from the keyboard", Toast.LENGTH_SHORT).show();
+                Toast.makeText(getContext(), "This app doesn't support GIFs from the keyboard", Toast.LENGTH_SHORT).show();
             }
         }
 
-    private InputMethodService getImeService() {
+        private void onSendSuccess() {
+            resetGifUi();
+            GifSearchView.this.setVisibility(View.GONE);
+            InputMethodService ims2 = getImeService();
+            if (ims2 != null) {
+                try { helium314.keyboard.keyboard.KeyboardSwitcher.getInstance().setAlphabetKeyboard(); }
+                catch (Throwable t) { Log.w(TAG, "keyboard switch failed: " + t); }
+            }
+            if (actionsListener != null) actionsListener.onGifInsertCompleted();
+        }
+
+    InputMethodService getImeService() {
         Context c = getContext();
         int guard = 0;
         while (c instanceof ContextWrapper && guard < 10) {
@@ -1135,6 +1096,277 @@ public class GifSearchView extends LinearLayout {
     }
 
     // Helper to convert the first frame of a GIF to a static PNG
+    // ── Animated WebP sticker conversion for WhatsApp ────────────────────────
+    private static final int STICKER_SIZE   = 512;
+    private static final int MAX_STICKER_KB = 490;
+    // Cache: gifFile path → converted sticker file (avoids re-encoding on repeated taps)
+    private final java.util.Map<String, File> stickerCache = new java.util.HashMap<>();
+
+    /**
+     * Convert a GIF file to an animated WebP sticker suitable for WhatsApp.
+     * Optimized for speed: max 8 frames, single bitmap reuse, quality 60, cached result.
+     */
+    @Nullable
+    private File convertGifToAnimatedWebpSticker(File gifFile) {
+        // Return cached result if available
+        File cached = stickerCache.get(gifFile.getAbsolutePath());
+        if (cached != null && cached.exists() && cached.length() > 0) {
+            Log.d(TAG, "Sticker cache hit: " + cached.length() + " bytes");
+            return cached;
+        }
+
+        FileInputStream fis = null;
+        try {
+            fis = new FileInputStream(gifFile);
+            Movie movie = Movie.decodeStream(fis);
+            if (movie == null || movie.duration() == 0) {
+                Log.e(TAG, "Movie decode failed or zero duration");
+                return null;
+            }
+
+            int duration = movie.duration();
+            int srcW = Math.max(1, movie.width());
+            int srcH = Math.max(1, movie.height());
+
+            // Cap at 8 frames — enough for smooth animation, 4x faster than 30 frames
+            int frameCount = Math.min(8, Math.max(1, duration / 100)); // ~10fps
+            if (frameCount < 1) frameCount = 1;
+            int frameDelayMs = duration / frameCount;
+
+            // Pre-compute scale and destination rect once
+            float scale = Math.min((float) STICKER_SIZE / srcW, (float) STICKER_SIZE / srcH);
+            int scaledW = (int) (srcW * scale);
+            int scaledH = (int) (srcH * scale);
+            int left = (STICKER_SIZE - scaledW) / 2;
+            int top  = (STICKER_SIZE - scaledH) / 2;
+            android.graphics.Rect dst = new android.graphics.Rect(left, top, left + scaledW, top + scaledH);
+
+            // Reuse a single sticker bitmap across all frames
+            Bitmap stickerBmp = Bitmap.createBitmap(STICKER_SIZE, STICKER_SIZE, Bitmap.Config.ARGB_8888);
+            Canvas sc = new Canvas(stickerBmp);
+            android.graphics.Paint scalePaint = new android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG);
+
+            // Encode frames — start at quality 60 (fits 8 frames easily under 500KB)
+            java.util.List<byte[]> frameChunks = new java.util.ArrayList<>(frameCount);
+            java.util.List<Integer> frameDelays = new java.util.ArrayList<>(frameCount);
+            int quality = 60;
+            long totalBytes = 0;
+
+            for (int i = 0; i < frameCount; i++) {
+                movie.setTime(i * frameDelayMs);
+
+                // Draw source frame into a raw bitmap, then scale into sticker bitmap
+                Bitmap raw = Bitmap.createBitmap(srcW, srcH, Bitmap.Config.ARGB_8888);
+                movie.draw(new Canvas(raw), 0, 0);
+                sc.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
+                sc.drawBitmap(raw, null, dst, scalePaint);
+                raw.recycle();
+
+                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(32 * 1024);
+                stickerBmp.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality, bos);
+                byte[] frameData = bos.toByteArray();
+                frameChunks.add(frameData);
+                frameDelays.add(frameDelayMs);
+                totalBytes += frameData.length;
+            }
+            stickerBmp.recycle();
+
+            // If still over limit, drop to quality 40 and re-encode
+            if (totalBytes > MAX_STICKER_KB * 1024L) {
+                Log.d(TAG, "Sticker over limit (" + totalBytes/1024 + "KB), re-encoding at q=40");
+                quality = 40;
+                totalBytes = 0;
+                Bitmap stickerBmp2 = Bitmap.createBitmap(STICKER_SIZE, STICKER_SIZE, Bitmap.Config.ARGB_8888);
+                Canvas sc2 = new Canvas(stickerBmp2);
+                frameChunks.clear();
+                for (int i = 0; i < frameCount; i++) {
+                    movie.setTime(i * frameDelayMs);
+                    Bitmap raw2 = Bitmap.createBitmap(srcW, srcH, Bitmap.Config.ARGB_8888);
+                    movie.draw(new Canvas(raw2), 0, 0);
+                    sc2.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
+                    sc2.drawBitmap(raw2, null, dst, scalePaint);
+                    raw2.recycle();
+                    java.io.ByteArrayOutputStream bos2 = new java.io.ByteArrayOutputStream(16 * 1024);
+                    stickerBmp2.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality, bos2);
+                    byte[] fd = bos2.toByteArray();
+                    frameChunks.add(fd);
+                    totalBytes += fd.length;
+                }
+                stickerBmp2.recycle();
+            }
+
+            Log.d(TAG, "Sticker: " + frameCount + " frames, " + totalBytes/1024 + "KB, q=" + quality);
+
+            // Assemble animated WebP RIFF container
+            byte[] webpBytes = buildAnimatedWebP(frameChunks, frameDelays, STICKER_SIZE, STICKER_SIZE);
+            if (webpBytes == null) return null;
+
+            // Write to cache directory
+            File outDir = new File(getContext().getCacheDir(), "klipy_stickers");
+            if (!outDir.exists()) outDir.mkdirs();
+            String baseName = gifFile.getName().replaceAll("\\.[^.]+$", "");
+            File outFile = new File(outDir, baseName + ".webp");
+            try (FileOutputStream fos2 = new FileOutputStream(outFile)) {
+                fos2.write(webpBytes);
+            }
+            Log.d(TAG, "Sticker written: " + outFile.length() + " bytes");
+
+            // Cache for future taps
+            stickerCache.put(gifFile.getAbsolutePath(), outFile);
+            return outFile;
+
+        } catch (Throwable t) {
+            Log.e(TAG, "convertGifToAnimatedWebpSticker failed", t);
+            return null;
+        } finally {
+            if (fis != null) try { fis.close(); } catch (Throwable ignore) {}
+        }
+    }
+
+    /**
+     * Assemble an animated WebP RIFF file from pre-encoded lossy WebP frame chunks.
+     *
+     * Animated WebP structure:
+     *   RIFF ????  WEBP
+     *     VP8X  10  (canvas width-1, canvas height-1, flags=ANIMATION)
+     *     ANIM   6  (background color, loop count)
+     *     ANMF  ??  (per frame: x, y, width-1, height-1, duration, flags, VP8/VP8L data)
+     *     ...
+     */
+    @Nullable
+    private static byte[] buildAnimatedWebP(
+            java.util.List<byte[]> frames,
+            java.util.List<Integer> delaysMs,
+            int canvasW, int canvasH) {
+        if (frames.isEmpty()) return null;
+        try {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+
+            // We'll write the RIFF payload first, then prepend the 12-byte RIFF header
+            java.io.ByteArrayOutputStream payload = new java.io.ByteArrayOutputStream();
+
+            // VP8X chunk (10 bytes of data)
+            // Flags: bit 1 = animation
+            int vp8xFlags = (1 << 1); // ANIMATION_FLAG
+            writeChunk(payload, "VP8X", new byte[]{
+                (byte)(vp8xFlags & 0xFF), 0, 0, 0,          // flags (LE)
+                (byte)((canvasW - 1) & 0xFF),                // canvas width - 1 (24-bit LE)
+                (byte)(((canvasW - 1) >> 8) & 0xFF),
+                (byte)(((canvasW - 1) >> 16) & 0xFF),
+                (byte)((canvasH - 1) & 0xFF),                // canvas height - 1 (24-bit LE)
+                (byte)(((canvasH - 1) >> 8) & 0xFF),
+                (byte)(((canvasH - 1) >> 16) & 0xFF),
+            });
+
+            // ANIM chunk (6 bytes): background color (BGRA) + loop count (0 = infinite)
+            writeChunk(payload, "ANIM", new byte[]{
+                0, 0, 0, 0,   // background color (transparent)
+                0, 0          // loop count = 0 (infinite)
+            });
+
+            // ANMF chunks — one per frame
+            for (int i = 0; i < frames.size(); i++) {
+                byte[] vp8Data = frames.get(i);
+                int delayMs = delaysMs.get(i);
+
+                // Strip the RIFF/WEBP/VP8 wrapper from the single-frame WebP to get raw VP8 bitstream
+                // Single-frame WebP: RIFF(4) + size(4) + WEBP(4) + VP8 (4) + size(4) + data
+                byte[] vp8Bitstream = extractVP8Bitstream(vp8Data);
+                if (vp8Bitstream == null) {
+                    Log.w(TAG, "Could not extract VP8 bitstream from frame " + i + ", using raw");
+                    vp8Bitstream = vp8Data;
+                }
+
+                // ANMF data: frame X (24-bit), Y (24-bit), width-1 (24-bit), height-1 (24-bit),
+                //            duration (24-bit ms), flags (8-bit), then VP8 chunk
+                java.io.ByteArrayOutputStream anmfData = new java.io.ByteArrayOutputStream();
+                // Frame X, Y (both 0 — full canvas)
+                anmfData.write(new byte[]{0, 0, 0, 0, 0, 0});
+                // Frame width - 1 (24-bit LE)
+                int fw = canvasW - 1;
+                int fh = canvasH - 1;
+                anmfData.write(new byte[]{
+                    (byte)(fw & 0xFF), (byte)((fw >> 8) & 0xFF), (byte)((fw >> 16) & 0xFF),
+                    (byte)(fh & 0xFF), (byte)((fh >> 8) & 0xFF), (byte)((fh >> 16) & 0xFF),
+                });
+                // Duration (24-bit LE, in ms)
+                anmfData.write(new byte[]{
+                    (byte)(delayMs & 0xFF), (byte)((delayMs >> 8) & 0xFF), (byte)((delayMs >> 16) & 0xFF),
+                });
+                // Flags: bit 1 = blending method (0 = use alpha blending)
+                anmfData.write(0);
+                // VP8 chunk inside ANMF
+                writeChunk(anmfData, "VP8 ", vp8Bitstream);
+
+                writeChunk(payload, "ANMF", anmfData.toByteArray());
+            }
+
+            // Build final RIFF file: "RIFF" + total_size(4) + "WEBP" + payload
+            byte[] payloadBytes = payload.toByteArray();
+            int riffSize = 4 + payloadBytes.length; // "WEBP" + payload
+            out.write("RIFF".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            writeLe32(out, riffSize);
+            out.write("WEBP".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            out.write(payloadBytes);
+
+            return out.toByteArray();
+        } catch (Throwable t) {
+            Log.e(TAG, "buildAnimatedWebP failed", t);
+            return null;
+        }
+    }
+
+    /** Write a RIFF chunk: 4-byte FourCC + 4-byte LE size + data (padded to even length). */
+    private static void writeChunk(java.io.OutputStream out, String fourCC, byte[] data)
+            throws java.io.IOException {
+        out.write(fourCC.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        writeLe32(out, data.length);
+        out.write(data);
+        if ((data.length & 1) != 0) out.write(0); // pad to even
+    }
+
+    /** Write a 32-bit little-endian integer. */
+    private static void writeLe32(java.io.OutputStream out, int value) throws java.io.IOException {
+        out.write(value & 0xFF);
+        out.write((value >> 8) & 0xFF);
+        out.write((value >> 16) & 0xFF);
+        out.write((value >> 24) & 0xFF);
+    }
+
+    /**
+     * Extract the raw VP8 bitstream from a single-frame WebP file.
+     * Single-frame WebP layout: RIFF(4) size(4) WEBP(4) VP8_(4) size(4) bitstream(...)
+     */
+    @Nullable
+    private static byte[] extractVP8Bitstream(byte[] webpBytes) {
+        try {
+            if (webpBytes.length < 20) return null;
+            // Verify RIFF header
+            if (webpBytes[0] != 'R' || webpBytes[1] != 'I' || webpBytes[2] != 'F' || webpBytes[3] != 'F') return null;
+            if (webpBytes[8] != 'W' || webpBytes[9] != 'E' || webpBytes[10] != 'B' || webpBytes[11] != 'P') return null;
+            // Find VP8 or VP8L chunk starting at offset 12
+            int offset = 12;
+            while (offset + 8 <= webpBytes.length) {
+                String tag = new String(webpBytes, offset, 4, java.nio.charset.StandardCharsets.US_ASCII);
+                int chunkSize = (webpBytes[offset+4] & 0xFF)
+                        | ((webpBytes[offset+5] & 0xFF) << 8)
+                        | ((webpBytes[offset+6] & 0xFF) << 16)
+                        | ((webpBytes[offset+7] & 0xFF) << 24);
+                if (tag.equals("VP8 ") || tag.equals("VP8L")) {
+                    int dataStart = offset + 8;
+                    int dataEnd = Math.min(dataStart + chunkSize, webpBytes.length);
+                    byte[] result = new byte[dataEnd - dataStart];
+                    System.arraycopy(webpBytes, dataStart, result, 0, result.length);
+                    return result;
+                }
+                offset += 8 + chunkSize + (chunkSize & 1); // skip to next chunk (even-padded)
+            }
+            return null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     private File convertGifToPngFirstFrame(File gifFile) {
         FileInputStream fis = null;
         try {
