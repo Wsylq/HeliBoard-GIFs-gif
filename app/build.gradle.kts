@@ -21,12 +21,21 @@ val klipyKey: String = localProps.getProperty("KLIPY_API_KEY", "")
 android {
     compileSdk = 35
 
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file("expressly.jks")
+            storePassword = "expressly123"
+            keyAlias = "expressly"
+            keyPassword = "expressly123"
+        }
+    }
+
     defaultConfig {
-        applicationId = "helium314.keyboard"
+        applicationId = "com.expressly.keyboard"
         minSdk = 21
         targetSdk = 35
         versionCode = 3201
-        versionName = "3.2"
+        versionName = "1.0"
         ndk {
             abiFilters.clear()
             abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
@@ -41,6 +50,7 @@ android {
             isShrinkResources = false
             isDebuggable = false
             isJniDebuggable = false
+            signingConfig = signingConfigs.getByName("release")
         }
         create("nouserlib") { // same as release, but does not allow the user to provide a library
             isMinifyEnabled = true
@@ -66,7 +76,7 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             applicationIdSuffix = ".debug"
         }
-        base.archivesBaseName = "HeliBoard_" + defaultConfig.versionName
+        base.archivesBaseName = "Expressly_" + defaultConfig.versionName
     }
 
     buildFeatures {

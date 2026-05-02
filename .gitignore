@@ -13,3 +13,5 @@ app/.attach_*
 fastlane/Appfile
 tools/*.txt
 .kiro/*
+release_build.log
+expressly.jks
